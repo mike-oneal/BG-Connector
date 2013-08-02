@@ -7,4 +7,4 @@ In 2011, Putnam Fellow Brian Morgan, created the ArcGIS services that became the
 
 Notes on <a href="https://github.com/arnarb/aanav/blob/master/doc/bgbase.md"><em>BG-BASE</em> schema</a>.
 
-arnarb's source code is licensed under the <a href="https://github.com/arnarb/BG-Connector/blob/master/LICENSE">GNU General Public License</a>. Feedback, pull requests welcome.
+arnarb's source code is licensed under the <a href="https://github.com/arnarb/BG-Connector/blob/master/LICENSE">GNU General Public License</a>. While feedback and pull requests are welcome, we ask that any derived works give the Arnold Arboretum proper credit and notification.  
