@@ -25,8 +25,7 @@ class WarehouseToSde(object):
 	#	stagingWorkspace:		Path to the Staging Workspace
 	#	productionWorkspace:	Path to the Production Workspace
 	#	bgbaseEditVersion:		Version name to perform the edits in
-	#	stagingReplicaName:		Name of the the replica to sync.
-	#	prodReplicaName:		Name of the replica to flush.
+	#	replica:				Name of the the replica to sync.
 
 	def __init__(self, warehouse, config):
 		self._warehouse = warehouse
@@ -40,7 +39,7 @@ class WarehouseToSde(object):
 		logging.info("******************************************************************************")
 		logging.info("Begin " + func)
 		
-		keys = ["lockFilePath", "stagingWorkspace","productionWorkspace","bgbaseEditVersion","stagingReplicaName","prodReplicaName"]
+		keys = ["lockFilePath", "stagingWorkspace","productionWorkspace","bgbaseEditVersion","replica"]
 		if not self._config.hasValues(keys):
 			logging.error('Invalid config file.')
 			logging.info('End ' + func);
@@ -80,9 +79,6 @@ class WarehouseToSde(object):
 			logging.info("End " + func)
 			logging.info("******************************************************************************")
 			return
-			
-		self._reconcileProd()
-		self._flushChanges()
 		
 		lockfile.unlock()
 		logging.info("End " + func)
@@ -292,11 +288,8 @@ class WarehouseToSde(object):
 	def _bgbaseEditVersion(self):
 		return self._config['bgbaseEditVersion']
 		
-	def _stagingReplicaName(self):
-		return self._config['stagingReplicaName']
-		
-	def _prodReplicaName(self):
-		return self._config['prodReplicaName']
+	def _replica(self):
+		return self._config['replica']
 		
 	def _makeLayer(self, dataset, row, key):
 		where_clause = dataset['pkfield'] + " = " + str(key)
@@ -372,8 +365,12 @@ class WarehouseToSde(object):
 		logging.info("Begin " + func)
 		try:
 			logging.debug("Synchronizing data from staging to production")
-			arcpy.SynchronizeChanges_management(self._stagingWorkspace(), self._stagingReplicaName(), self._productionWorkspace(), "FROM_GEODATABASE1_TO_2", "IN_FAVOR_OF_GDB1", "BY_OBJECT", "DO_NOT_RECONCILE")
+			arcpy.SynchronizeChanges_management(self._stagingWorkspace(), self._replica(), self._productionWorkspace(), "FROM_GEODATABASE1_TO_2", "IN_FAVOR_OF_GDB1", "BY_OBJECT", "DO_NOT_RECONCILE")
 			logging.debug("Finished synchronizing data from production to staging")
+			
+			logging.debug("Compressing data in Production SDE")
+			arcpy.Compress_management(self._productionWorkspace())
+			logging.debug("Finished compressing data in Production SDE")
 			return True
 		except arcpy.ExecuteError:
 			msgs = arcpy.GetMessages(2)
@@ -387,26 +384,6 @@ class WarehouseToSde(object):
 			logging.error(msg)
 		logging.info("End " + func)
 		return False
-		
-	def _flushChanges(self):
-		func = 'WarehouseToSde._flushChanges'
-		logging.info("Begin " + func)
-		try:
-			logging.debug("Synchronizing data from production to staging")
-			arcpy.SynchronizeChanges_management(self._productionWorkspace(), self._prodReplicaName(), self._stagingWorkspace(), "FROM_GEODATABASE1_TO_2", "IN_FAVOR_OF_GDB1", "BY_OBJECT", "DO_NOT_RECONCILE")
-			logging.debug("Finished synchronizing data from production to staging")
-		except arcpy.ExecuteError:
-			msgs = arcpy.GetMessages(2)
-			arcpy.AddError(msgs)
-			logging.error("ArcGIS error: %s", msgs)
-		except:
-			tb = sys.exc_info()[2]
-			tbinfo = traceback.format_tb(tb)[0]
-			msg = "Error in " + func + ":\n" + tbinfo + "\nError Info:\n" + str(sys.exc_info()[1])
-			arcpy.AddError(msg)
-			logging.error(msg)
-		logging.info("End " + func)
-		return;
 
 """
 DECLARE @begin_time datetime, @end_time datetime, @begin_lsn binary(10), @end_lsn binary(10);
@@ -435,5 +412,16 @@ VALUES('-10000', 'A', 701987, 473261,1)
 
 INSERT INTO Warehouse.dbo.PLANTS_LOCATION(ACC_NUM,ACC_NUM_QUAL,X_COORD,Y_COORD,line_seq)
 VALUES('-10001', 'A', 703987, 475261,1)
+
+
+select 0 as OBJECTID, ACC_NUM, rep_id, 'Warehouse' as SOURCE from Warehouse.dbo.PLANTS_LOCATION where ACC_NUM like '-1%'
+union
+select OBJECTID, ACC_NUM, rep_id, 'Staging' from Staging.dbo.PLANTS_LOCATION where ACC_NUM like '-1%'
+union
+select OBJECTID, ACC_NUM, rep_id, 'Staging Version' from Staging.dbo.a76 where ACC_NUM like '-1%'
+union
+select OBJECTID, ACC_NUM, rep_id, 'Production' from Production.dbo.PLANTS_LOCATION where ACC_NUM like '-1%'
+union
+select OBJECTID, ACC_NUM, rep_id, 'Production Version' from Production.dbo.a46 where ACC_NUM like '-1%'
 
 """

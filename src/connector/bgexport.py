@@ -8,10 +8,10 @@ from time import strftime
 ###################################################################################################
 #
 # class:	SdeToWarehouse
-# purpose:	Worker class that creates an XML change file between SDE Production and SDE Staging.
+# purpose:	Worker class that creates an XML change file between SDE Staging and SDE Production.
 #			This change file is sent to a configurable location, where BG-BASE will consume the
 #			changes. This will allow edits made in SDE to make it into BG-BASE. If configured, the
-#			class will also reconcile edits made in the Production Edit Version to the Production
+#			class will also reconcile edits made in the Staging Edit Versions to the Staging
 #			Default Version.
 #
 # author:	Jason Sardano
@@ -28,9 +28,8 @@ class SdeToWarehouse(object):
 	#	autoReconcile			true|false. If true, the script will reconcile changes made in production edit with production default.
 	#	stagingWorkspace:		Path to the Staging Workspace
 	#	productionWorkspace:	Path to the Production Workspace
-	#	stagingEditVersion:		Version name to perform the edits in
-	#	prodEditVersion:		Version name to used to reconcile production edits with production default.
-	#	prodReplicaName:		Name of the replica to flush.
+	#	stagingEditVersions:	Comma-delimited list of versions in Staging SDE to reconcile and post edits made in ArcGIS by users if autoReconcile is true
+	#	replica:				Name of the the replica to sync.
 	
 	def __init__(self, config):
 		self._config = config
@@ -45,7 +44,7 @@ class SdeToWarehouse(object):
 		logging.info("******************************************************************************")
 		logging.info("Begin " + func)
 		
-		keys = ["tempPath", "exportPath", "deleteTempFiles", "autoReconcile", "stagingWorkspace","productionWorkspace","stagingEditVersion","prodEditVersion","prodReplicaName"]
+		keys = ["tempPath", "exportPath", "deleteTempFiles", "autoReconcile", "stagingWorkspace","productionWorkspace","stagingEditVersions","replica"]
 		if not self._config.hasValues(keys):
 			logging.error('Invalid config file.')
 			logging.info('End ' + func);
@@ -53,8 +52,8 @@ class SdeToWarehouse(object):
 			return
 		
 		if self._autoReconcile() == True:
-			logging.info('Reconciling edits from edits to default in production')
-			self._reconcileProd()
+			logging.info('Reconciling edits from edit versions to default in staging')
+			self._reconcileStaging()
 			
 		logging.info("Exporting XML change file for BG-BASE")
 		if self._exportChangeFile() == False:
@@ -65,17 +64,11 @@ class SdeToWarehouse(object):
 			logging.info("******************************************************************************")
 			return
 	
-		logging.info("Synchronizing changes in Production Default SDE with Staging SDE")
-		if self._syncWithStaging() == False:
-			logging.error("Failed to sync with staging. Sync will not run.")
+		logging.info("Synchronizing changes in Staging Default SDE with Production SDE")
+		if self._syncWithProd() == False:
+			logging.error("Failed to sync with prod. Sync will not run.")
 			logging.info("******************************************************************************")
 			return False
-	
-		arcpy.AddMessage("Reconciling data from Staging SDE Edit Version to Staging SDE Default Version")
-		self._reconcileStaging()
-	
-		arcpy.AddMessage("Compressing changes in Production SDE")
-		self._compressProd()
 	
 		arcpy.AddMessage("Sending XML change file to BG-BASE folder queue")
 		if self._sendChangeFile() == False:
@@ -87,18 +80,22 @@ class SdeToWarehouse(object):
 		logging.info("******************************************************************************")
 		return True
 		
-	def _reconcileProd(self):
-		func = '_reconcileProd'
+	def _reconcileStaging(self):
+		func = '_reconcileStaging'
 		logging.info("Begin " + func)
+		
 		try:
-			logging.debug("Reconciling data from Production Edit version to production DEFAULT")
-			arcpy.ReconcileVersions_management(self._productionWorkspace(), "ALL_VERSIONS", self._prodEditVersion(), "dbo.DEFAULT", "NO_LOCK_ACQUIRED", "NO_ABORT", "BY_OBJECT", "FAVOR_TARGET_VERSION", "POST", "KEEP_VERSION")
-			logging.debug("Finished reconciling data from Production Edit version to production DEFAULT")
+			logging.debug('Getting edits versions')
+			versions = self._stagingEditVersions().split(',')
+			if len(versions) > 0:
+				logging.debug('Found ' + str(len(versions)) + ' edit versions to reconcile.')
+				logging.debug("Reconciling data with Staging DEFAULT")
+				arcpy.ReconcileVersions_management(self._stagingWorkspace(), "ALL_VERSIONS", "dbo.DEFAULT", ";".join(versions), "NO_LOCK_ACQUIRED", "NO_ABORT", "BY_OBJECT", "FAVOR_TARGET_VERSION", "POST", "KEEP_VERSION")
+				logging.debug("Finished reconciling data with Staging DEFAULT")
 			
-			logging.debug("Compressing data in Production SDE Version")
-			arcpy.Compress_management(self._productionWorkspace())
-			logging.debug("Finished compressing data in Production SDE Edit Version")
-			return True
+			logging.debug("Compressing data in Staging SDE")
+			arcpy.Compress_management(self._stagingWorkspace())
+			logging.debug("Finished compressing data in Staging SDE")
 		except arcpy.ExecuteError:
 			msgs = arcpy.GetMessages(2)
 			arcpy.AddError(msgs)
@@ -109,8 +106,8 @@ class SdeToWarehouse(object):
 			msg = "Error in " + func + ":\n" + tbinfo + "\nError Info:\n" + str(sys.exc_info()[1])
 			arcpy.AddError(msg)
 			logging.error(msg)
-		logging.info("End reconcile prod")
-		return False
+		logging.info("End " + func)
+		return
 		
 	def _exportChangeFile(self):
 		func = '_exportChangeFile'
@@ -119,7 +116,7 @@ class SdeToWarehouse(object):
 		try:
 			export_file = self._tempFile
 			logging.debug("Exporting data change message to: %s", export_file)
-			arcpy.ExportDataChangeMessage_management(self._productionWorkspace(), export_file, self._prodReplicaName(), "DO_NOT_SWITCH", "UNACKNOWLEDGED", "NEW_CHANGES")
+			arcpy.ExportDataChangeMessage_management(self._stagingWorkspace(), export_file, self._replica(), "DO_NOT_SWITCH", "UNACKNOWLEDGED", "NEW_CHANGES")
 			result = True
 		except arcpy.ExecuteError:
 			msgs = arcpy.GetMessages(0)
@@ -135,13 +132,17 @@ class SdeToWarehouse(object):
 		logging.info("End export change file")
 		return result
 		
-	def _syncWithStaging(self):
-		func = '_syncWithStaging'
+	def _syncWithProd(self):
+		func = '_syncWithProd'
 		logging.info("Begin " + func)
 		try:
 			logging.debug("Synchronizing data from production to staging")
-			arcpy.SynchronizeChanges_management(self._productionWorkspace(), self._prodReplicaName(), self._stagingWorkspace(), "FROM_GEODATABASE1_TO_2", "IN_FAVOR_OF_GDB1", "BY_OBJECT", "DO_NOT_RECONCILE")
+			arcpy.SynchronizeChanges_management(self._stagingWorkspace(), self._replica(), self._productionWorkspace(), "FROM_GEODATABASE1_TO_2", "IN_FAVOR_OF_GDB1", "BY_OBJECT", "DO_NOT_RECONCILE")
 			logging.debug("Finished synchronizing data from production to staging")
+			
+			logging.debug("Compressing data in Production SDE")
+			arcpy.Compress_management(self._productionWorkspace())
+			logging.debug("Finished compressing data in Production SDE")
 		except arcpy.ExecuteError:
 			msgs = arcpy.GetMessages(2)
 			arcpy.AddError(msgs)
@@ -153,50 +154,6 @@ class SdeToWarehouse(object):
 			arcpy.AddError(msg)
 			logging.error(msg)
 		logging.info("End sync with staging")
-		return
-		
-	def _reconcileStaging(self):
-		func = '_reconcileStaging'
-		logging.info("Begin " + func)
-		try:
-			logging.debug("Reconciling data from staging GIS to staging DEFAULT")
-			arcpy.ReconcileVersions_management(self._stagingWorkspace(), "ALL_VERSIONS", self._stagingEditVersion(), "dbo.DEFAULT", "NO_LOCK_ACQUIRED", "NO_ABORT", "BY_OBJECT", "FAVOR_TARGET_VERSION", "POST", "KEEP_VERSION")
-			logging.debug("Finished reconciling data from staging GIS to staging DEFAULT")
-			
-			logging.debug("Compressing data in Staging SDE")
-			arcpy.Compress_management(self._stagingWorkspace())
-			logging.debug("Finished compressing data in Staging SDE")
-		except arcpy.ExecuteError:
-			msgs = arcpy.GetMessages(2)
-			arcpy.AddError(msgs)
-			logging.error("ArcGIS error: %s", msgs)
-		except:
-			tb = sys.exc_info()[2]
-			tbinfo = traceback.format_tb(tb)[0]
-			msg = "Error in " + func + ":\n" + tbinfo + "\nError Info:\n" + str(sys.exc_info()[1])
-			arcpy.AddError(msg)
-			logging.error(msg)
-		logging.info("End reconcile staging")
-		return
-		
-	def _compressProd(self):
-		func = '_compressProd'
-		logging.info("Begin " + func)
-		try:
-			logging.debug("Compressing data in Production SDE Default")
-			arcpy.Compress_management(self._productionWorkspace())
-			logging.debug("Finished compressing data in Production SDE Default")
-		except arcpy.ExecuteError:
-			msgs = arcpy.GetMessages(2)
-			arcpy.AddError(msgs)
-			logging.error("ArcGIS error: %s", msgs)
-		except:
-			tb = sys.exc_info()[2]
-			tbinfo = traceback.format_tb(tb)[0]
-			msg = "Error in " + func + ":\n" + tbinfo + "\nError Info:\n" + str(sys.exc_info()[1])
-			arcpy.AddError(msg)
-			logging.error(msg)
-		logging.info("End " + func)
 		return
 		
 	def _sendChangeFile(self):
@@ -262,14 +219,11 @@ class SdeToWarehouse(object):
 	def _stagingWorkspace(self):
 		return self._config['stagingWorkspace']
 		
-	def _stagingEditVersion(self):
-		return self._config['stagingEditVersion']
+	def _stagingEditVersions(self):
+		return self._config['stagingEditVersions']
 		
 	def _productionWorkspace(self):
 		return self._config['productionWorkspace']
 		
-	def _prodReplicaName(self):
-		return self._config['prodReplicaName']
-		
-	def _prodEditVersion(self):
-		return self._config['_prodEditVersion']
+	def _replica(self):
+		return self._config['replica']
