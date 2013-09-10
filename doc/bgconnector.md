@@ -174,3 +174,11 @@ The connector is configured with a Java-like property file. The property file is
 		<td>true</td>
 	</tr>
 </table>
+
+Flow Charts
+-------------
+*Data Import*
+![dataimport](data_import_flowchart.png "Data Import Flow Chart")
+
+*Data Export*
+![dataexport](data_export_flowchart.png "Data Export Flow Chart")
