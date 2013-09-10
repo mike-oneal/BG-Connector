@@ -79,24 +79,20 @@ Python Code
 
 The connector is made of several Python classes, with 2 launcher files sitting at the top of the package structure.
 
-*util: Package that contains classes that perform various utility functions
-**Config: Class that reads the property file that runs the connector.
-**DateUtil: Class that performs various date/string operations.
-**DBUtil: Class that performs various operations against the Python ODBC client record sets.
-**LockFile: Class that writes out a lock file during the duration of the data import routine.
-
-*bgbase: Package that contains classes that interact with objects to read BG-BASE data.
-**Warehouse: Class that encapsulates the Warehouse Configuration Table.
-
-*bgimport: Package that contains classes that perform data import routines to move data from BG-BASE to ArcGIS.
-**WarehouseToSde: Class that calls the CDC functions to read the data changes from BG-BASE and imports the changes into ArcGIS.
-
-*bgexport: Package that contains classes that create the data changes files for BG-BASE.
-**SdeToWarehouse: Class that calls ArcGIS geoprocessing tools to create the XML data change files fot BG-BASE to consume.
-
-*top level:
-**warehouse_to_sde: Script that creates an intance of bgimport.WarehouseToSde and calls the class' run method.
-**sde_to_warehouse: Script that creates an intance of bgeport.SdeToWarehouse and calls the class' run method.
+* util: Package that contains classes that perform various utility functions
+** Config: Class that reads the property file that runs the connector.
+** DateUtil: Class that performs various date/string operations.
+** DBUtil: Class that performs various operations against the Python ODBC client record sets.
+** LockFile: Class that writes out a lock file during the duration of the data import routine.
+* bgbase: Package that contains classes that interact with objects to read BG-BASE data.
+** Warehouse: Class that encapsulates the Warehouse Configuration Table.
+* bgimport: Package that contains classes that perform data import routines to move data from BG-BASE to ArcGIS.
+** WarehouseToSde: Class that calls the CDC functions to read the data changes from BG-BASE and imports the changes into ArcGIS.
+* bgexport: Package that contains classes that create the data changes files for BG-BASE.
+** SdeToWarehouse: Class that calls ArcGIS geoprocessing tools to create the XML data change files fot BG-BASE to consume.
+* top level:
+** warehouse_to_sde: Script that creates an intance of bgimport.WarehouseToSde and calls the class' run method.
+** sde_to_warehouse: Script that creates an intance of bgeport.SdeToWarehouse and calls the class' run method.
 
 Property File
 -------------
