@@ -3,15 +3,12 @@ BG-BASE Connector
 
 Background
 ----------
-
 The BG-BASE Connector is a Python library that was written to synchronize data stored in BG-BASE and an ArcGIS 10.1 Enterprise Geodatabase.
 The connector was written using Python 2.7, the Python 32-bit ODBC client and the ArcGIS 10.1 Python library.
 
 Methodology
 -----------
-
 *Data Import*
-
 The database synchronization between BG-BASE and ArcGIS is achieved via multiple technologies. BG-BASE stores changes in various tables in a Microsoft SQL Server database (Warehouse). Change Data Capture (CDC) is enabled for the Warehouse tables that participate in synchronization. BG-BASE calls a batch file, which in turn calls a python file that launches the connector to initiate the BG-BASE to ArcGIS process (data import).
 
 The connector reads a configuration table stored in the Warehouse database (described below) to determine which tables participate in the synchronization process. The connector calls CDC functions stored in the configuration table to read changes from BG-BASE, parses the changes, and stores the changes in the ArcGIS Geodatabase. The CDC function calls and parsing of the Warehouse data is accomplished via the Python ODBC client, and the data loading into the ArcGIS Geodatabase is accomplished via the ArcGIS Python library.
@@ -59,12 +56,10 @@ The connector reads a configuration table stored in the Warehouse database (desc
 </table>
 
 *Data Export*
-
 The database synchronization between ArcGIS and BG-BASE is achieved using ArcGIS geodatabase replicas. An ArcGIS user launches a batch file that calls the connector data export routine. The connector uses ArcGIS geoprocessing tools to create an XML data change file, which contains data changes that have been made by users using ArcGIS software, and then exports the XML change file to a location where BG-BASE reads the XML data change file. BG-BASE then applies the data changes to the BG-BASE tables.
 
 Geodatabase Design
 ------------------
-
 *Databases*
 The enterprise geodatabase contains 2 databases named Staging and Production. A geodatabase replica named StagingToProduction sits in between the 2 geodatabases, and is used to synchronize the data between Staging and Production. The replica is a one-way replica, with the Staging database as the parent and the Production database as a child to Staging. In this scenario, the Production database is a clone of the Staging database, with users making their edits in Staging and Profuction serving as a resd-only database.
 
@@ -72,11 +67,10 @@ The enterprise geodatabase contains 2 databases named Staging and Production. A 
 There are 3 versions in the Staging geodatabase besides the Default database: BG-BASE, Desktop and Mobile. The BG-BASE version is where the connector writes edits from the CDC data from the Warehouse database. The Desktop and Mobile versions store edits made by users and are used in the data export process.
 
 Visual representation of geodatabase design:
-TODO: Insert image here.
+![gdb](gdb.png "Geodatabase Design")
 
 Python Code
 -----------
-
 The connector is made of several Python classes, with 2 launcher files sitting at the top of the package structure.
 
 * util: Package that contains classes that perform various utility functions
@@ -94,16 +88,15 @@ The connector is made of several Python classes, with 2 launcher files sitting a
 	* warehouse_to_sde: Script that creates an intance of bgimport.WarehouseToSde and calls the class' run method.
 	* sde_to_warehouse: Script that creates an intance of bgeport.SdeToWarehouse and calls the class' run method.
 
-Property File
+Configuration
 -------------
-
-The connector uses a Java-like property file to configure itself. The property file contains the following properties:
+The connector is configured with a Java-like property file. The property file is referenced by the warehouse_to_sde and sde_to_warehouse scripts and contains the following properties:
 
 <table>
 	<tr>
 		<th>Property</th>
 		<th>Description</th>
-		<th>Sample</th>
+		<th>Example</th>
 	</tr>
 	<tr>
 		<td>importLogFile</td>
