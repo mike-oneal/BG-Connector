@@ -69,6 +69,18 @@ There are 3 versions in the Staging geodatabase besides the Default database: BG
 Visual representation of geodatabase design:
 ![gdb](gdb.png "Geodatabase Design")
 
+Spatial Data Creation
+---------------------
+A custom Python module was written to create the spatial data from tables stored in the Warehouse database. At the beginning of the BG-BASE Connector, there was only one spatial dataset, Plants_Location, so an import tool was not necessary. However, as the BG-BASE Connector has evolved and the Arboretum's GIS capabilities have increased, an import tool was necessary.
+
+The import tool allows a user to specify a source table to import the data from, along with an optional X and Y field. If the X and Y fields are specified, then the dataset will be imported as a spatially-enabled table (feature class). Otherwise, the dataset will be imported as a simple table. If a feature class is imported, then the points are created using an XY Event Layer. The spatial reference is hard-coded to [sr].
+
+Geodatabase Replicas
+--------------------
+As stated earlier, the BG-BASE Connector uses Geodatabase Replicas to synchronize data between Staging and Production, and to send data changes to BG-BASE. As of ArcGIS 10.1, datasets can only be added to a replica during the replica's creation process; it is not possible to add an additional dataset to a replica once the replica has been created without custom code written in ArcObjects.
+
+The connector was written to work with one replica. It is possible to write the code to work with multiple replicas should the need arise. 
+
 Python Code
 -----------
 The connector is made of several Python classes, with 2 launcher files sitting at the top of the package structure.
@@ -182,3 +194,30 @@ Flow Charts
 
 *Data Export*
 ![dataexport](data_export_flowchart.png "Data Export Flow Chart")
+
+General Thoughts and Concerns
+-----------------------------
+*System Design*
+The BG-BASE Connector is a fragile, loosely-coupled system. It relies on BG-BASE calling a Python module via a batch file in order to import the data from BG-BASE to the geodatabase. BG-BASE is responsible for deciding when to call the script, and must have read access to the script. The export process can be launched manually by a user or from a scheduled task.
+
+*Data Integrity*
+Because the BG-BASE Connector is a loosely-coupled system, it is highly likely that the data between BG-BASE and the geodatabase will get out of sync. This can happen when CDC is not enabled in the Warehouse, when the XML change files of geodatabase changes are not processed correctly, or if there is a general network I/O error during the script's execution process.
+
+*Performance*
+The desired synchronization between Warehouse and the geodatabase is as close to real time as possible. The BG-BASE Connector in its current form experiences a lot of overhead. It has been suggested that the connector is run on a scheduled interval rather than a transactional model to reduce the overhead.
+
+*BG-BASE Implementation*
+BG-BASE records observations using a concept of a line sequence, where a value of 1 is the most recent observation, the value of 2 is the second most recent observation, etc. When a new observation is recorded for a plant, there are X number of database transactions (and potentially X + 1, depending on how BG-BASE inserts the data).
+
+So if a plant has 10 observations, and a new observation is made, then the following pseudo code is executed:
+*Insert into Plants_X(id, line_seq) Values('fakeid', 0)*
+*Update Plants_IX set line_seq =  line_seq + 10*
+
+These 2 SQL statements will generate 12 CDC records, one for the insert, and 11 for the line_seq updates.
+
+Rather than using a line_seq to track the most recent observation, a FROM_DATE and TO_DATE field can be added, with a null TO_DATE value representing the most recent observation. For example:
+*Update Plants_IX set to_date = now() where to_date is null*
+*Insert into Plants_X(id, to_date) Values('fakeid', null)*
+
+*An alternate approach*
+BG-BASE can use ArcObjects to interact with the Geodatabase directly, therefore, the BG-BASE connector model can altogether be removed. BG-BASE could apply changes directly to Staging and call the synchronization process immediately. The export from the geodatabase to BG-BASE will still require a tool to generate the change file for BG-BASE to read.
