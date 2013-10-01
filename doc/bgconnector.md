@@ -11,49 +11,98 @@ Methodology
 *Data Import*
 The database synchronization between BG-BASE and ArcGIS is achieved via multiple technologies. BG-BASE stores changes in various tables in a Microsoft SQL Server database (Warehouse). Change Data Capture (CDC) is enabled for the Warehouse tables that participate in synchronization. BG-BASE calls a batch file, which in turn calls a python file that launches the connector to initiate the BG-BASE to ArcGIS process (data import).
 
-The connector reads a configuration table stored in the Warehouse database (described below) to determine which tables participate in the synchronization process. The connector calls CDC functions stored in the configuration table to read changes from BG-BASE, parses the changes, and stores the changes in the ArcGIS Geodatabase. The CDC function calls and parsing of the Warehouse data is accomplished via the Python ODBC client, and the data loading into the ArcGIS Geodatabase is accomplished via the ArcGIS Python library.
+The connector reads a configuration Python file (described below) to determine which replicas and tables participate in the synchronization process. The connector calls CDC functions referenced in the config file to read changes from BG-BASE, parses the changes, and stores the changes in an ArcGIS Geodatabase. The CDC function calls and parsing of the Warehouse data is accomplished via the Python ODBC client, and the data loading into the ArcGIS Geodatabase is accomplished via the ArcGIS Python library.
 
-***Configuration Table (Warehouse.dbo.SDE_SYNC_TABLES)***
-<table>
-	<tr>
-		<th>Column Name</th>
-		<th>Description</th>
-	</tr>
-	<tr>
-		<td>TABLE_NAME</td>
-		<td>Name of the table in the ArcGIS database to receive the changes.</td>
-	</tr>
-	<tr>
-		<td>CDC_TABLE_NAME</td>
-		<td>Name of the table in the SQL Server warehouse database.
-		This can be a view.</td>
-	</tr>
-	<tr>
-		<td>CDC_FUNCTION</td>
-		<td>The name of the function that the script will call to read the changes from BG-BASE.</td>
-	</tr>
-	<tr>
-		<td>PK_FIELD</td>
-		<td>The primary key field name in the Warehouse table and ArcGIS table
-		(must be the same in bothe databases).</td>
-	</tr>
-	<tr>
-		<td>X_FIELD</td>
-		<td>Optional. The field name that contains the Longitude data for the table.</td>
-	</tr>
-	<tr>
-		<td>Y_FIELD</td>
-		<td>Optional. The field name that contains the Latitude data for the table.</td>
-	</tr>
-	<tr>
-		<td>DISABLED</td>
-		<td>If set to 1, then the script will ignore this table.</td>
-	</tr>
-	<tr>
-		<td>LAST_SYNC_DATE</td>
-		<td>The last time this table was synchronized.</td>
-	</tr>
-</table>
+***Configuration File (config.py)***
+
+The configuration file is a python file that has a required Python dictionary named "connector". An explanation of the config properties is described after the Python file below. The python file looks like:
+<code>
+connector = {
+	"importLogFile":r"C:\Temp\SqlServerConnector\logs\warehouse_to_sde.log",
+	"exportLogFile":r"C:\Temp\SqlServerConnector\logs\sde_to_warehouse.log",
+	"replicas":[
+		{
+			"name":"DBO.BGBASE_StagingToProduction",
+			"disabled":False,
+			"sqlServer": {
+				"server":"localhost",
+				"database":"Warehouse"
+			},
+			"tempPath":r"C:\Temp\SqlServerConnector\temp",
+			"exportPath":r"C:\Temp\SqlServerConnector\temp",
+			"lockFilePath":r"C:\Temp\SqlServerConnector\temp\StagingToProduction.loc",
+			"deleteTempFiles":True,
+			"autoReconcile":True,
+			"stagingWorkspace":r"C:\Temp\SDE Connections\Staging@ARCGIS10.sde",
+			"productionWorkspace":r"C:\Temp\SDE Connections\Production@ARCGIS10.sde",
+			"sqlserverEditVersion":"DBO.BG-BASE",
+			"stagingEditVersions":["DBO.DESKTOP","DBO.MOBILE"],
+			"stagingDefaultVersion":"DBO.DEFAULT",
+			"datasets":[
+				{
+					"cdcFunction":"cdc.fn_cdc_get_all_changes_dbo_PLANTS_LOCATION",
+					"sqlserverDataset":
+					{
+						"table":"Warehouse.cdc.dbo_PLANTS_LOCATION_CT",
+						"primaryKey":"rep_id",
+						"xField":"X_COORD",
+						"yField":"Y_COORD"
+					},
+					"sdeDataset":
+					{
+						"table":"Staging.dbo.PLANTS_LOCATION",
+						"primaryKey":"rep_id"
+					}
+				}
+			]
+		}
+	]
+};
+</code>
+
+Explanation of the config file:
+
+connector = {
+	"importLogFile": Path to the log file for the import process,
+	"exportLogFile": Path to the log file for the export process,
+	"replicas":[ #replicas is an array of replica configurations.  1 or more objects are required.
+		{
+			"name":Name of the Geodatabase replica,
+			"disabled":If True, then the connector will ignore this replica,
+			"sqlServer": { #dictionary describing SQL Server connection properties
+				"server":Name of the SQL Server,
+				"database":Database name of the database to connect to
+			},
+			"tempPath": Path where the connector writes its temporary data to,
+			"exportPath": Path where the connector writes data changes from Staging SDE to Production SDE,
+			"lockFilePath": File where the connector creates a lock file for processing,
+			"deleteTempFiles": If True the connector will delete the temp files that it writes out in the tempPath,
+			"autoReconcile": If True, the connector will reconcile data updates in Staging and Production SDE,
+			"stagingWorkspace": SDE Connection file for the Staging Geodatabase,
+			"productionWorkspace": SDE Connection file for the Production Geodatabase,
+			"sqlserverEditVersion": SDE Version name where CDC changes are written to,
+			"stagingEditVersions":[An array SDE Version names of Versions that are to be reconciled during the export process. Required if autoReconcile is True],
+			"stagingDefaultVersion":SDE Version name of the Default instance in the Staging SDE,
+			"datasets":[ #An array of Dataset configuration objects. 1 or more objects are required.
+				{
+					"cdcFunction": The CDC function to execute to get the changes from the Warehouse,
+					"sqlserverDataset": #Python dictionary describing the dataset in the Warehouse to synchronize
+					{
+						"table":Name of the CDC change table in Warehouse (not the actual table name),
+						"primaryKey": The primary key field for the dataset,
+						"xField": Optional, the field name of the Longitude Field,
+						"yField":Optional, the field name of the Latitude Field (If the X or Y field aren't specified, then the connector will treat the dataset as a table instead of a feature class.
+					},
+					"sdeDataset": #Python dictionary describing the dataset in SDE to synchronize.
+					{
+						"table": Name of the table or feature class in SDE,
+						"primaryKey": The primary key field for the dataset,
+					}
+				}
+			]
+		}
+	]
+};
 
 *Data Export*
 The database synchronization between ArcGIS and BG-BASE is achieved using ArcGIS geodatabase replicas. An ArcGIS user launches a batch file that calls the connector data export routine. The connector uses ArcGIS geoprocessing tools to create an XML data change file, which contains data changes that have been made by users using ArcGIS software, and then exports the XML change file to a location where BG-BASE reads the XML data change file. BG-BASE then applies the data changes to the BG-BASE tables.
@@ -71,121 +120,34 @@ Visual representation of geodatabase design:
 
 Spatial Data Creation
 ---------------------
-A custom Python module was written to create the spatial data from tables stored in the Warehouse database. At the beginning of the BG-BASE Connector, there was only one spatial dataset, Plants_Location, so an import tool was not necessary. However, as the BG-BASE Connector has evolved and the Arboretum's GIS capabilities have increased, an import tool was necessary.
+A custom ArcGIS Python Toolbox was written to create the spatial data from tables stored in the Warehouse database. At the beginning of the BG-BASE Connector, there was only one spatial dataset, Plants_Location, so an import tool was not necessary. However, as the BG-BASE Connector has evolved and the Arboretum's GIS capabilities have increased, an import tool was necessary.
 
-The import tool allows a user to specify a source table to import the data from, along with an optional X and Y field. If the X and Y fields are specified, then the dataset will be imported as a spatially-enabled table (feature class). Otherwise, the dataset will be imported as a simple table. If a feature class is imported, then the points are created using an XY Event Layer. The spatial reference is hard-coded to [sr].
+The import tool allows a user to specify a source table to import the data from, an output location where the data will be created, a name for the exported dataset, and optional X and Y field, and an optional sptial reference. If the X and Y fields are specified, then the dataset will be imported as a spatially-enabled table (feature class). Otherwise, the dataset will be imported as a simple table. If a feature class is imported, then the points are created using an XY Event Layer.
 
 Geodatabase Replicas
 --------------------
 As stated earlier, the BG-BASE Connector uses Geodatabase Replicas to synchronize data between Staging and Production, and to send data changes to BG-BASE. As of ArcGIS 10.1, datasets can only be added to a replica during the replica's creation process; it is not possible to add an additional dataset to a replica once the replica has been created without custom code written in ArcObjects.
 
-The connector was written to work with one replica. It is possible to write the code to work with multiple replicas should the need arise. 
-
 Python Code
 -----------
 The connector is made of several Python classes, with 2 launcher files sitting at the top of the package structure.
 
-* util: Package that contains classes that perform various utility functions
-	* Config: Class that reads the property file that runs the connector.
+* connector.db: Module that contains classes that read the config file and return properties of the replicas
+	*Replicas: Class that contains an array of replicas
+	*Replica: Class that stores information about the replica, and contains an array of dataset objects.
+	*Dataset: Class that stored information about the dataset to replicate.
+
+* connector.util: Module that contains classes that perform various utility functions
 	* DateUtil: Class that performs various date/string operations.
 	* DBUtil: Class that performs various operations against the Python ODBC client record sets.
 	* LockFile: Class that writes out a lock file during the duration of the data import routine.
-* bgbase: Package that contains classes that interact with objects to read BG-BASE data.
-	* Warehouse: Class that encapsulates the Warehouse Configuration Table.
-* bgimport: Package that contains classes that perform data import routines to move data from BG-BASE to ArcGIS.
-	* WarehouseToSde: Class that calls the CDC functions to read the data changes from BG-BASE and imports the changes into ArcGIS.
-* bgexport: Package that contains classes that create the data changes files for BG-BASE.
-	* SdeToWarehouse: Class that calls ArcGIS geoprocessing tools to create the XML data change files fot BG-BASE to consume.
+* connector.io: Module that contains worker classes that import, export, synchronize and replicate data.
+	* SqlServerImporter: Class that calls the CDC functions to read the data changes from BG-BASE and imports the changes into ArcGIS.
+	* GeodatabaseExporter: Class that calls ArcGIS geoprocessing tools to create the XML data change files fot BG-BASE to consume.
 * top level:
-	* warehouse_to_sde: Script that creates an intance of bgimport.WarehouseToSde and calls the class' run method.
-	* sde_to_warehouse: Script that creates an intance of bgeport.SdeToWarehouse and calls the class' run method.
+	* sqlserver_to_sde: Script that creates an intance of connector.io.SqlServerImporter and calls the class' run method.
+	* sde_to_xml: Script that creates an intance of connector.io.GeodatabaseExporter and calls the class' run method.
 
-Configuration
--------------
-The connector is configured with a Java-like property file. The property file is referenced by the warehouse_to_sde and sde_to_warehouse scripts and contains the following properties:
-
-<table>
-	<tr>
-		<th>Property</th>
-		<th>Description</th>
-		<th>Example</th>
-	</tr>
-	<tr>
-		<td>importLogFile</td>
-		<td>Path to import log file</td>
-		<td>C:\temp\warehouse_to_sde.log</td>
-	</tr>
-	<tr>
-		<td>exportLogFile</td>
-		<td>Path to export log file</td>
-		<td>C:\temp\sde_to_warehouse.log</td>
-	</tr>
-	<tr>
-		<td>server</td>
-		<td>Name of SQL Server.</td>
-		<td>servername.harvard.edu</td>
-	</tr>
-	<tr>
-		<td>database</td>
-		<td>SQL Server Database that contains the Warehouse data</td>
-		<td>Warehouse</td>
-	</tr>
-	<tr>
-		<td>adminTable</td>
-		<td>Table name that contains the datasets that are configured for BG-BASE synchronization</td>
-		<td>dbo.SDE_SYNC_TABLES</td>
-	</tr>
-	<tr>
-		<td>stagingWorkspace</td>
-		<td>Path to SDE Connection file to Staging Geodatabase</td>
-		<td>C:\temp\Staging@ARCGIS10.sde</td>
-	</tr>
-	<tr>
-		<td>productionWorkspace</td>
-		<td>Path to SDE Connection file to Production Geodatabase</td>
-		<td>C:\temp\Production@ARCGIS10.sde</td>
-	</tr>
-	<tr>
-		<td>bgbaseEditVersion</td>
-		<td>SDE version name in Staging SDE to perform BG-BASE-originated edtis</td>
-		<td>DBO.BG-BASE</td>
-	</tr>
-	<tr>
-		<td>stagingEditVersions</td>
-		<td>Comma-delimited list of versions in Staging SDE to reconcile and post edits made in ArcGIS by users if autoReconcile is true</td>
-		<td>DBO.DESKTOP,DBO.MOBILE</td>
-	</tr>
-	<tr>
-		<td>replica</td>
-		<td>Name of replica between Staging and Production.</td>
-		<td>DBO.StagingToProduction</td>
-	</tr>
-	<tr>
-		<td>lockFilePath</td>
-		<td>Lock file location</td>
-		<td>C:\temp\bgimport.loc</td>
-	</tr>
-	<tr>
-		<td>tempPath</td>
-		<td>Temp directory where XML change files are created.</td>
-		<td>C:\temp\bgtemp</td>
-	</tr>
-	<tr>
-		<td>exportPath</td>
-		<td>Directory where XML change files are picked up by BG-BASE.</td>
-		<td>C:\temp\bgexport</td>
-	</tr>
-	<tr>
-		<td>deleteTempFiles</td>
-		<td>true|false. If true, deletes XML change files in directory set in tempPath</td>
-		<td>true</td>
-	</tr>
-	<tr>
-		<td>autoReconcile</td>
-		<td>true|false. If true, reconciles edits from Production edit to Production default before</td>
-		<td>true</td>
-	</tr>
-</table>
 
 Flow Charts
 -------------
@@ -216,8 +178,10 @@ So if a plant has 10 observations, and a new observation is made, then the follo
 These 2 SQL statements will generate 12 CDC records, one for the insert, and 11 for the line_seq updates.
 
 Rather than using a line_seq to track the most recent observation, a FROM_DATE and TO_DATE field can be added, with a null TO_DATE value representing the most recent observation. For example:
-*Update Plants_IX set to_date = now() where to_date is null*
+*Update Plants_X set to_date = now() where to_date is null*
 *Insert into Plants_X(id, to_date) Values('fakeid', null)*
 
 *An alternate approach*
 BG-BASE can use ArcObjects to interact with the Geodatabase directly, therefore, the BG-BASE connector model can altogether be removed. BG-BASE could apply changes directly to Staging and call the synchronization process immediately. The export from the geodatabase to BG-BASE will still require a tool to generate the change file for BG-BASE to read.
+
+An alternate approach to ArcOvhects is using an ArcGIS Server Feature Service, and BG-BASE calling the feature service's REST endpoint with HTTP requests. This eliminates the complexity of ArcObjects, but introduces the overhead of maintaining ArcGIS Server.

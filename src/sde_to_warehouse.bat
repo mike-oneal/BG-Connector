@@ -1,1 +1,0 @@
-C:\Python27\ArcGIS10.1\python.exe "C:\Users\Public\Documents\BGBase Connector\sde_to_warehouse.py"
