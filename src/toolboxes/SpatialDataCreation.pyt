@@ -45,6 +45,13 @@ class CreateFeatureClassFromTableTool(object):
 			parameterType="Required",
 			direction="Input")
 			
+		in_filter = arcpy.Parameter(
+			displayName="Where Clause",
+			name="in_where",
+			datatype="String",
+			parameterType="Optional",
+			direction="Input")
+			
 		in_xfield = arcpy.Parameter(
 			displayName="X Field",
 			name="in_xfield",
@@ -77,7 +84,7 @@ class CreateFeatureClassFromTableTool(object):
 			parameterType="Derived",
 			direction="Output")
 			
-		return [in_table, in_workspace, in_name, in_xfield, in_yfield, in_sr, out_dataset]
+		return [in_table, in_workspace, in_name, in_filter, in_xfield, in_yfield, in_sr, out_dataset]
 
 	def isLicensed(self):
 		return True
@@ -92,9 +99,10 @@ class CreateFeatureClassFromTableTool(object):
 		in_table = parameters[0].valueAsText
 		in_ws = parameters[1].valueAsText
 		in_name = parameters[2].valueAsText
-		in_x = parameters[3].valueAsText
-		in_y = parameters[4].valueAsText
-		in_sr = parameters[5].valueAsText
+		in_filter = parameters[3].valueAsText
+		in_x = parameters[4].valueAsText
+		in_y = parameters[5].valueAsText
+		in_sr = parameters[6].valueAsText
 		
 		datasets_to_delete = []
 		temp_table_name = "tbl" + guid()
@@ -114,7 +122,7 @@ class CreateFeatureClassFromTableTool(object):
 			arcpy.MakeXYEventLayer_management(temp_table, in_x, in_y, xy_layer, in_sr)
 			
 			arcpy.AddMessage("Exporting XY layer to temp workspace")
-			arcpy.FeatureClassToFeatureClass_conversion(xy_layer, g_temp_workspace, xy_layer, "", "", "")
+			arcpy.FeatureClassToFeatureClass_conversion(xy_layer, g_temp_workspace, xy_layer, in_filter)
 			datasets_to_delete.append(xy_dataset)
 			
 			arcpy.AddMessage("Scrubbing points with invalid coordinates")
@@ -140,19 +148,25 @@ def getShape(x, y):
 				
 			arcpy.AddMessage("Exporting data to SDE")
 			arcpy.FeatureClassToFeatureClass_conversion(temp_layer, in_ws, in_name)
-			#For some reason, the Register as Versioned only works for feature classes if it's called twice.
-			arcpy.RegisterAsVersioned_management(output_dataset, "NO_EDITS_TO_BASE")
+			try:
+				#For some reason, the Register as Versioned only works for feature classes if it's called twice.
+				arcpy.RegisterAsVersioned_management(output_dataset, "NO_EDITS_TO_BASE")
+			except:
+				None
 		else:
 			arcpy.AddMessage("Exporting data to SDE")
-			arcpy.TableToTable_conversion(temp_table, in_ws, in_name)
+			arcpy.TableToTable_conversion(temp_table, in_ws, in_name, in_filter)
 			
-			arcpy.AddMessage("Registering as versioned")
-			arcpy.RegisterAsVersioned_management(output_dataset, "NO_EDITS_TO_BASE")
+			try:
+				arcpy.AddMessage("Registering as versioned")
+				arcpy.RegisterAsVersioned_management(output_dataset, "NO_EDITS_TO_BASE")
+			except:
+				None
 			
 		arcpy.AddMessage("Cleaning up temp datasets")
 		for dataset in datasets_to_delete:
 			arcpy.Delete_management(dataset)
 			
-		parameters[6].value = output_dataset
+		parameters[7].value = output_dataset
 		
 		return

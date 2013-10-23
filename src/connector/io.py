@@ -43,7 +43,7 @@ class SqlServerImporter(object):
 	def processReplica(self, replica):
 		func = 'SqlServerImporter.processReplica'
 		logging.info("Begin " + func)
-		logging.info("Processing " + replica.name)
+		logging.info("Processing replica " + replica.name)
 			
 		lockfile = util.LockFile(replica.lockFilePath)
 		if lockfile.locked():
@@ -56,6 +56,7 @@ class SqlServerImporter(object):
 		num_changes = 0
 		replica.connect()
 		for dataset in replica.datasets:
+			logging.debug('Processing dataset in ' + dataset.sdeTable)
 			changes = self._importChanges(dataset)
 			if changes > 0:
 				num_changes = num_changes + changes
@@ -300,7 +301,7 @@ class SqlServerImporter(object):
 				elif field_name != "GlobalID":
 					logging.warn(field_name + " not found in Warehouse")
 
-			if dataset.isSpatial == True:
+			if dataset.isSpatial == True and row_fields.has_key(dataset.xField) and row_fields.has_key(dataset.yField):
 				x = row[row_fields[dataset.xField]]
 				y = row[row_fields[dataset.yField]]
 				if x is not None and y is not None:

@@ -97,13 +97,14 @@ class Replica(object):
 			for i in range(0, len(config['datasets'])):
 				dataset = Dataset(config['datasets'][i], self)
 				if dataset.disabled:
-					logging.info(dataset + ' is disbled.')
+					logging.info(str(dataset) + ' is disbled.')
 				else:
 					self.datasets.append(dataset)
 		return
 		
 	def __del__(self):
-		self.close(self._connection)
+		if self._connection:
+			self.close(self._connection)
 		return
 		
 	def __str__(self):
@@ -195,9 +196,6 @@ class Dataset(object):
 		self._changeCursorFields = None
 		
 		return
-		
-	def __del__(self):
-		self.replica.close(self._connection)
 		
 	def __str__(self):
 		return self.cdcTable + '->' + self.sdeTable;
