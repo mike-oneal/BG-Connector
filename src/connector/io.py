@@ -168,9 +168,12 @@ class SqlServerImporter(object):
 			num_records = int(arcpy.GetCount_management(layer).getOutput(0))
 			if num_records > 0:
 				logging.error('Cannot insert record ' + str(key) + '. Record already exists')
+				bInsert = True
 			else:
 				features = arcpy.InsertCursor(layer)
 				field_names = self._getFieldNames(layer)
+				dataset.logBgBaseInfo(None, row)
+				
 				feature = features.newRow()
 				if self._loadFeature(feature, row, dataset, field_names, fields) == True:
 					features.insertRow(feature)
@@ -211,6 +214,8 @@ class SqlServerImporter(object):
 			num_features = 0
 			for feature in features:
 				num_features = num_features + 1
+				dataset.logBgBaseInfo(feature, row)
+				
 				if self._loadFeature(feature, row, dataset, field_names, fields) == True:
 					features.updateRow(feature)
 					logging.debug('Successfully updated record ' + str(key))
@@ -293,11 +298,35 @@ class SqlServerImporter(object):
 	
 	def _loadFeature(self, feature, row, dataset, feature_fields, row_fields):
 		func = 'SqlServerImporter._loadFeature'
+		last_field = ''
+		last_value = ''
 		try:
 			for field_name in feature_fields:
 				if row_fields.has_key(field_name):
 					new_value = row[row_fields[field_name]]
-					feature.setValue(field_name, new_value)
+					last_field = field_name
+					if new_value is not None:
+						last_value = new_value
+					else:
+						last_value = 'None'
+					try:
+						if str(type(new_value)) == "<class 'decimal.Decimal'>":
+							new_value = float(new_value)
+						feature.setValue(field_name, new_value)
+					except arcpy.ExecuteError:
+						msgs = arcpy.GetMessages(0)
+						arcpy.AddError(msgs)
+						logging.error("ArcGIS error: %s", msgs)
+						logging.error('Field/Value: %s, %s', last_field, last_value)
+						logging.error(type(last_value))
+					except:
+						tb = sys.exc_info()[2]
+						tbinfo = traceback.format_tb(tb)[0]
+						msg = "Error in " + func + ":\n" + tbinfo + "\nError Info:\n" + str(sys.exc_info()[1])
+						arcpy.AddError(msg)
+						logging.error(msg)
+						logging.error('Field/Value: %s, %s', last_field, last_value)
+						logging.error(type(last_value))
 				elif field_name != "GlobalID":
 					logging.warn(field_name + " not found in Warehouse")
 
@@ -305,18 +334,24 @@ class SqlServerImporter(object):
 				x = row[row_fields[dataset.xField]]
 				y = row[row_fields[dataset.yField]]
 				if x is not None and y is not None:
+					if str(type(x)) == "<class 'decimal.Decimal'>":
+						x = float(x)
+					if str(type(y)) == "<class 'decimal.Decimal'>":
+						y = float(y)
 					feature.shape = arcpy.PointGeometry(arcpy.Point(x, y))
 			return True
 		except arcpy.ExecuteError:
 			msgs = arcpy.GetMessages(0)
 			arcpy.AddError(msgs)
 			logging.error("ArcGIS error: %s", msgs)
+			logging.error('Field/Value: %s, %s', last_field, last_value)
 		except:
 			tb = sys.exc_info()[2]
 			tbinfo = traceback.format_tb(tb)[0]
 			msg = "Error in " + func + ":\n" + tbinfo + "\nError Info:\n" + str(sys.exc_info()[1])
 			arcpy.AddError(msg)
 			logging.error(msg)
+			logging.error('Field/Value: %s, %s', last_field, last_value)
 		return False
 		
 	def _reconcileStaging(self, replica):
@@ -563,44 +598,3 @@ class GeodatabaseExporter(object):
 			logging.error(msg)
 		logging.info("End " + func)
 		return result
-
-"""
-DECLARE @begin_time datetime, @end_time datetime, @begin_lsn binary(10), @end_lsn binary(10);
-SET @begin_time = '2000-01-01 00:00:00'
-SET @end_time = '2020-01-01 00:00:00';
-SELECT @begin_lsn = sys.fn_cdc_map_time_to_lsn('smallest greater than', @begin_time);
-SELECT @end_lsn = sys.fn_cdc_map_time_to_lsn('largest less than or equal', @end_time);
-SELECT * FROM cdc.fn_cdc_get_all_changes_dbo_PLANTS_LOCATION(@begin_lsn, @end_lsn, 'all');
-
-select * from Warehouse.cdc.dbo_PLANTS_LOCATION_CT
-where
-CONVERT(VARCHAR(MAX), __$seqval, 2) in ('000002230000015D0003', '0000022B000006C80002', '0000022B000006E90002')
-
-update PLANTS_LOCATION set GRID = 'TEST2.0'
-where ACC_NUM = '10000' and line_seq = 1
-
-SELECT * FROM Staging.dbo.PLANTS_LOCATION
-where ACC_NUM = '10000' and line_seq = 1
-order by SDE_STATE_ID desc
-
-SELECT * FROM Staging.dbo.a67
-where ACC_NUM = '10000' and line_seq = 1
-
-INSERT INTO Warehouse.dbo.PLANTS_LOCATION(ACC_NUM,ACC_NUM_QUAL,X_COORD,Y_COORD,line_seq)
-VALUES('-10000', 'A', 701987, 473261,1)
-
-INSERT INTO Warehouse.dbo.PLANTS_LOCATION(ACC_NUM,ACC_NUM_QUAL,X_COORD,Y_COORD,line_seq)
-VALUES('-10001', 'A', 703987, 475261,1)
-
-
-select 0 as OBJECTID, ACC_NUM, rep_id, 'Warehouse' as SOURCE from Warehouse.dbo.PLANTS_LOCATION where ACC_NUM like '-1%'
-union
-select OBJECTID, ACC_NUM, rep_id, 'Staging' from Staging.dbo.PLANTS_LOCATION where ACC_NUM like '-1%'
-union
-select OBJECTID, ACC_NUM, rep_id, 'Staging Version' from Staging.dbo.a76 where ACC_NUM like '-1%'
-union
-select OBJECTID, ACC_NUM, rep_id, 'Production' from Production.dbo.PLANTS_LOCATION where ACC_NUM like '-1%'
-union
-select OBJECTID, ACC_NUM, rep_id, 'Production Version' from Production.dbo.a46 where ACC_NUM like '-1%'
-
-"""

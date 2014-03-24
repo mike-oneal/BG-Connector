@@ -1,11 +1,6 @@
 import arcpy
-
-import uuid
-
-g_temp_workspace = "scratch.gdb"
-
-def guid():
-	return str(uuid.uuid1()).replace('-','');
+import json
+import pyodbc
 	
 def get_count(dataset):
 	return int(arcpy.GetCount_management(dataset).getOutput(0))
@@ -14,8 +9,7 @@ class Toolbox(object):
 	def __init__(self):
 		self.label = "Toolbox"
 		self.alias = ""
-		self.tools = [CreateFeatureClassFromTableTool]
-
+		self.tools = [CreateFeatureClassFromTableTool, DomainCreationTool]
 
 class CreateFeatureClassFromTableTool(object):
 	def __init__(self):
@@ -45,13 +39,6 @@ class CreateFeatureClassFromTableTool(object):
 			parameterType="Required",
 			direction="Input")
 			
-		in_filter = arcpy.Parameter(
-			displayName="Where Clause",
-			name="in_where",
-			datatype="String",
-			parameterType="Optional",
-			direction="Input")
-			
 		in_xfield = arcpy.Parameter(
 			displayName="X Field",
 			name="in_xfield",
@@ -75,7 +62,7 @@ class CreateFeatureClassFromTableTool(object):
 			parameterType="Optional",
 			direction="Input")
 		in_sr.parameterDependencies = [in_xfield.name, in_yfield.name]
-		in_sr.value = "PROJCS['NAD_1927_StatePlane_Massachusetts_Mainland_FIPS_2001',GEOGCS['GCS_North_American_1927',DATUM['D_North_American_1927',SPHEROID['Clarke_1866',6378206.4,294.9786982]],PRIMEM['Greenwich',0.0],UNIT['Degree',0.0174532925199433]],PROJECTION['Lambert_Conformal_Conic'],PARAMETER['False_Easting',600000.0],PARAMETER['False_Northing',0.0],PARAMETER['Central_Meridian',-71.5],PARAMETER['Standard_Parallel_1',41.71666666666667],PARAMETER['Standard_Parallel_2',42.68333333333333],PARAMETER['Latitude_Of_Origin',41.0],UNIT['Foot_US',0.3048006096012192]];-119901400 -96951900 3048.00609601219;0 1;0 1;3.28083333333333E-03;0.001;0.001;IsHighPrecision"
+		in_sr.value = arcpy.SpatialReference(2249).exportToString()
 			
 		out_dataset = arcpy.Parameter(
 			displayName="New Dataset",
@@ -84,7 +71,74 @@ class CreateFeatureClassFromTableTool(object):
 			parameterType="Derived",
 			direction="Output")
 			
-		return [in_table, in_workspace, in_name, in_filter, in_xfield, in_yfield, in_sr, out_dataset]
+		return [in_table, in_workspace, in_name, in_xfield, in_yfield, in_sr, out_dataset]
+
+	def isLicensed(self):
+		return True
+
+	def updateParameters(self, parameters):
+		return
+
+	def updateMessages(self, parameters):
+		return
+		
+	def execute(self, parameters, messages):
+		in_table = parameters[0].valueAsText
+		in_ws = parameters[1].valueAsText
+		in_name = parameters[2].valueAsText
+		in_x = parameters[3].valueAsText
+		in_y = parameters[4].valueAsText
+		in_sr = parameters[5].valueAsText
+		
+		ws_desc = arcpy.Describe(in_ws)
+		dataset = OdbcDataset(in_table)
+		n = dataset.create(in_ws, in_name, in_x, in_y, in_sr)
+		if n < 0:
+			if dataset.createdDataset == False:
+				arcpy.AddMessage("Failed to create output table")
+			elif dataset.addedFields == False:
+				arcpy.AddMessage("Failed to add fields to output table")
+			else:
+				arcpy.AddMessage("Failed to import all records.")
+		else:
+			arcpy.AddMessage("Adding GlobalID")
+			try:
+				arcpy.AddGlobalIDs_management([dataset.outputDataset])
+			except Exception as e:
+				arcpy.AddMessage("Error adding Global ID: " + e.message)
+		
+			if ws_desc.workspaceType == 'RemoteDatabase':
+				arcpy.AddMessage("Registering as versioned")
+				try:
+					arcpy.RegisterAsVersioned_management(dataset.outputDataset, "NO_EDITS_TO_BASE")
+				except Exception as e:
+					arcpy.AddMessage("Error registering as versioned: " + e.message)
+			parameters[6].value = dataset.outputDataset
+		return
+
+class DomainCreationTool(object):
+	def __init__(self):
+		self.label = "Create Domains"
+		self.description = "Creates domains in a workspace from a configuration file."
+		self.canRunInBackground = False
+
+	def getParameterInfo(self):	
+		in_domains = arcpy.Parameter(
+			displayName="Domain Configuration File",
+			name="in_domain",
+			datatype="File",
+			parameterType="Required",
+			direction="Input")
+		in_domains.value = r"C:\Users\Public\Documents\SqlServerConnector\toolboxes\domainConfig.py"
+			
+		in_workspace = arcpy.Parameter(
+			displayName="Workspace",
+			name="in_ws",
+			datatype="DEWorkspace",
+			parameterType="Required",
+			direction="Input")
+			
+		return [in_domains, in_workspace]
 
 	def isLicensed(self):
 		return True
@@ -96,77 +150,290 @@ class CreateFeatureClassFromTableTool(object):
 		return
 
 	def execute(self, parameters, messages):
-		in_table = parameters[0].valueAsText
+		in_domains = parameters[0].valueAsText
 		in_ws = parameters[1].valueAsText
-		in_name = parameters[2].valueAsText
-		in_filter = parameters[3].valueAsText
-		in_x = parameters[4].valueAsText
-		in_y = parameters[5].valueAsText
-		in_sr = parameters[6].valueAsText
-		
-		datasets_to_delete = []
-		temp_table_name = "tbl" + guid()
-		arcpy.AddMessage("Importing " + in_table + " to temp workspace")
-		arcpy.TableToTable_conversion(in_table, g_temp_workspace, temp_table_name)
-		temp_table = g_temp_workspace + "\\" + temp_table_name
-		datasets_to_delete.append(temp_table)
-		arcpy.AddMessage("Adding GlobalID")
-		arcpy.AddGlobalIDs_management([temp_table])
-		
-		output_dataset = in_ws + "\\" + in_name
-		
-		if in_x is not None and in_y is not None:
-			xy_layer = "xy_" + guid()
-			xy_dataset = g_temp_workspace + "\\" + xy_layer
-			arcpy.AddMessage("Creating XY Event Layer")
-			arcpy.MakeXYEventLayer_management(temp_table, in_x, in_y, xy_layer, in_sr)
-			
-			arcpy.AddMessage("Exporting XY layer to temp workspace")
-			arcpy.FeatureClassToFeatureClass_conversion(xy_layer, g_temp_workspace, xy_layer, in_filter)
-			datasets_to_delete.append(xy_dataset)
-			
-			arcpy.AddMessage("Scrubbing points with invalid coordinates")
-			temp_layer = "lyr_" + guid()
-			where_clause = in_x + " IS NULL OR " + in_y + " IS NULL"
-			arcpy.MakeFeatureLayer_management(xy_dataset, temp_layer, where_clause)
-			num_invalid_points = get_count(temp_layer)
-			arcpy.AddMessage("Found " + str(num_invalid_points) + " invalid points in layer")
-			
-			if num_invalid_points > 0:
-				arcpy.AddMessage('Setting invalid points to null')
-				#This seems to be the only way to null out the Shape
-				arcpy.CalculateField_management(xy_dataset, "Shape", "Null", "VB", "")
-				
-				arcpy.AddMessage('Fixing valid points')
-				temp_layer = "lyr" + guid()
-				where_clause = in_x + " IS NOT NULL AND " + in_y + " IS NOT NULL"
-				arcpy.MakeFeatureLayer_management(xy_dataset, temp_layer, where_clause)
-				func = """
-def getShape(x, y):
-	return arcpy.Point(x, y)"""
-				arcpy.CalculateField_management(temp_layer, "Shape", "getShape(!" + in_x + "!, !" + in_y + "!)", "PYTHON_9.3", func)
-				
-			arcpy.AddMessage("Exporting data to SDE")
-			arcpy.FeatureClassToFeatureClass_conversion(temp_layer, in_ws, in_name)
-			try:
-				#For some reason, the Register as Versioned only works for feature classes if it's called twice.
-				arcpy.RegisterAsVersioned_management(output_dataset, "NO_EDITS_TO_BASE")
-			except:
-				None
-		else:
-			arcpy.AddMessage("Exporting data to SDE")
-			arcpy.TableToTable_conversion(temp_table, in_ws, in_name, in_filter)
-			
-			try:
-				arcpy.AddMessage("Registering as versioned")
-				arcpy.RegisterAsVersioned_management(output_dataset, "NO_EDITS_TO_BASE")
-			except:
-				None
-			
-		arcpy.AddMessage("Cleaning up temp datasets")
-		for dataset in datasets_to_delete:
-			arcpy.Delete_management(dataset)
-			
-		parameters[7].value = output_dataset
-		
+		self.createDomains(in_domains, in_ws);
 		return
+		
+	def createDomains(self, domains, workspace):
+		if not domains or domains == "":
+			return
+			
+		try:
+			arcpy.AddMessage("Loading domain configuration from " + domains)
+			domains = open(domains).read()
+			domains = json.loads(domains)
+			arcpy.AddMessage("Successfully loaded domain configuration.")
+			datasetConfig = domains["datasets"]
+			
+			ws_desc = arcpy.Describe(workspace)
+			for i in range(0, len(domains["domains"])):
+				domainConfig = domains["domains"][i]
+				if not domainConfig["name"] in ws_desc.domains:
+					self.createDomain(domainConfig, workspace)
+				else:
+					#Perhaps the user wants to add values to an existing domain?
+					#We could add logic to iterate through the values in the
+					#domain config file and add them to the domain, if they don't exist.
+					arcpy.AddMessage("The domain '" + domainConfig["name"] + "' already exists.")
+			
+			self.loadDomain(datasetConfig, workspace)
+				
+		except Exception as e:
+			arcpy.AddMessage("Error in createDomains: " + e.message)
+		return
+		
+	def createDomain(self, domainConfig, workspace):
+		if domainConfig["type"] == "CODED":
+			name = domainConfig["name"]
+			type = domainConfig["dataType"]
+			desc = domainConfig["description"]
+			try:
+				arcpy.AddMessage("Creating domain: " + name)
+				arcpy.CreateDomain_management(workspace, name, desc, type, "CODED")
+				arcpy.AddMessage("Created domain: " + name)
+				
+				numCodes = 0
+				for i in range(0, len(domainConfig["values"])):
+					code = domainConfig["values"][i]["code"]
+					value = domainConfig["values"][i]["value"]
+					arcpy.AddCodedValueToDomain_management(workspace, name, code, value)
+					numCodes = numCodes + 1
+				arcpy.AddMessage("Added " + str(numCodes) + " values to " + name)
+			except Exception as e:
+				arcpy.AddMessage("Error in createDomain: " + e.message)
+		return
+		
+	def loadDomain(self, datasetConfigs, workspace):
+		for i in range(0, len(datasetConfigs)):
+			datasetConfig = datasetConfigs[i]
+			dataset = workspace + "\\" + datasetConfig["name"]
+			domains = datasetConfig["domains"]
+			for j in range(0, len(domains)):
+				field = domains[j]["field"]
+				domain = domains[j]["domain"]
+				arcpy.AddMessage("Setting " + datasetConfig["name"] + "." + field + " to " + domain)
+				arcpy.AssignDomainToField_management(dataset, field, domain)
+		return
+		
+
+#Helper class to create GDB Dataset from SQL Server table		
+class OdbcDataset(object):
+	def __init__(self, in_ds):
+		self.dataset = in_ds
+		self.name = get_dataset_name(self.dataset)
+		self.createdDataset = False
+		self.addedFields = False;
+		self.outputDataset = "";
+		ws = get_workspace(in_ds)
+		ws_desc = arcpy.Describe(ws)
+		
+		server = ws_desc.connectionProperties.server
+		database = ws_desc.connectionProperties.database
+		connectionString = "DRIVER={SQL Server};SERVER=${server};DATABASE=${database};Trusted_Connection=yes".replace('${server}', server).replace('${database}', database)
+		self.connection = pyodbc.connect(connectionString)
+		return
+		
+	def __del__(self):
+		if self.connection is not None:
+			try:
+				self.connection.close()
+			except:
+				None
+		return
+		
+	def create(self, destination, outputName, x_field, y_field, sr):
+		dataset = destination + "\\" + outputName
+		self.outputDataset = dataset
+		num_records = -1
+		try:
+			if x_field is None or x_field == "" or y_field is None or y_field == "":
+				arcpy.AddMessage("Creating table: " + outputName)
+				arcpy.CreateTable_management(destination, outputName)
+			else:
+				#Only supporting points for now
+				arcpy.AddMessage("Creating feature class: " + outputName)
+				arcpy.CreateFeatureclass_management (destination, outputName, "POINT", None, None, None, sr)
+			self.createdDataset = True
+		except Exception as e:
+			arcpy.AddMessage("Error creating dataset: " + e.message)
+			return num_records
+		
+		field = []
+		try:
+			arcpy.AddMessage("Adding fields to " + outputName)
+			fields = self._addFields(dataset)
+			self.addedFields = True
+		except Exception as e:
+			arcpy.AddMessage("Error adding fields: " + e.message)
+			return num_records
+		
+		try:
+			arcpy.AddMessage("Loading data into " + outputName)
+			num_records = self._loadRows(dataset, fields, x_field, y_field)
+		except Exception as e:
+			arcpy.AddMessage("Error loading rows: " + e.message)
+			return num_records
+		return num_records
+		
+	def _addFields(self, dataset):
+		cursor = self.connection.cursor()
+		fields = []
+		for column in cursor.columns(table=self.name):
+			fields.append(self._addField(dataset, column))
+		return fields
+		
+	def _addField(self, dataset, column):
+		field_name = column.column_name
+		field_type = ""
+		field_precision = None
+		field_scale = None
+		field_length = None
+		field_is_nullable = "NON_NULLABLE"
+		
+		if column.nullable == 1:
+			field_is_nullable = "NULLABLE"
+			
+		#Bug in SQL Server, refer to http://support.esri.com/en/bugs/nimbus/TklNMDk1NjQ4
+		# Fixed in SP 10.3 10.2.2
+		#Allow nulls for now
+		field_is_nullable = "NULLABLE"
+		
+		n = column.type_name
+		if n == 'varchar' or n == 'char':
+			field_type = "TEXT"
+			field_length = column.column_size
+		elif n == 'numeric':
+			field_type = "DOUBLE"
+			field_precision = column.column_size
+			field_scale = column.decimal_digits
+		elif n == 'int' or n == 'int identity':
+			field_type = "LONG"
+			field_precision = column.column_size
+		elif n == 'datetime':
+			field_type = "DATE"
+		
+		arcpy.AddField_management (dataset, field_name, field_type, field_precision, field_scale, field_length, None, field_is_nullable)
+		return field_name
+		
+	def _loadRows(self, dataset, fields, x_field, y_field):
+		arcpy.AddMessage("inside _loadRows")
+		insert_cursor = arcpy.InsertCursor(dataset);
+		arcpy.AddMessage("Creating cursor")
+		cursor = self.connection.cursor()
+		cursor.execute("SELECT * from " + self.name)
+		
+		new_row = None
+		n = 0
+		field_name = ""
+		try:
+			for row in cursor:
+				n = n + 1
+				if n%1000 == 0:
+					arcpy.AddMessage("Added " + str(n) + " records")
+				x = None
+				y = None
+				new_row = insert_cursor.newRow();
+				for i in xrange(len(fields)):
+					field_name = fields[i];
+					field_value = row[i];
+					if field_value is not None:
+						if field_value.__class__.__name__ == "Decimal":
+							field_value = float(field_value)
+						if field_name == x_field:
+							x = field_value
+						elif field_name == y_field:
+							y = field_value
+						new_row.setValue(field_name, field_value);
+				if x is not None and y is not None:
+					new_row.shape = arcpy.PointGeometry(arcpy.Point(x, y))
+				insert_cursor.insertRow(new_row);
+			arcpy.AddMessage("Added " + str(n) + " records to " + self.name)
+		except Exception as e:
+			arcpy.AddMessage("Error adding row: " + e.message)
+			arcpy.AddMessage("Record: " + str(n) + ", Field: " + field_name)
+			n = -1
+		
+		cursor.close()
+		del new_row
+		del insert_cursor
+		return n
+	
+	def printDebug(self):
+		arcpy.AddMessage("Iterating over " + get_dataset_name(self.dataset))
+		cursor = self.connection.cursor()
+		for row in cursor.columns(table=self.name):
+			arcpy.AddMessage("Column: " + row.column_name)
+			arcpy.AddMessage("Nullable: " + str(row.nullable == 1))
+			arcpy.AddMessage("Data type: " + str(row.data_type))
+			arcpy.AddMessage("Type name: " + row.type_name)
+			arcpy.AddMessage("Size: " + str(row.column_size))
+			arcpy.AddMessage("Precision: " + str(row.decimal_digits))
+			arcpy.AddMessage(" ")
+
+##########################
+# String utility functions
+##########################
+
+def get_dataset_name(path):
+	name = right(path, "\\");
+	name = right(name, ".");
+	return name;
+	
+def get_full_dataset_name(dataset):
+	name = right(dataset, "\\");
+	return name;
+	
+def get_workspace(path):
+	end = last_index_of(path, "\\");
+	if(end > -1):
+		return substring(path, 0, end);
+	else:
+		return "";
+
+def contains(s, c):
+	index = s.find(c);
+	if(index < 0):
+		return False;
+	else:
+		return True;
+
+def left(s, c):
+	index = s.find(c);
+	if(index < 0):
+		return s;
+	else:
+		return s[:index];
+		
+def left_from_last(s, c):
+	index = s.rfind(c);
+	if(index < 0):
+		return s;
+	else:
+		return s[0:index];
+
+def right(s, c):
+	index = s.rfind(c);
+	if(index < 0):
+		return s;
+	else:
+		return s[(index + 1):];
+		
+def last_index_of(s, c):
+	return s.rfind(c);
+		
+def substring(s, start, end):
+	return s[start:end];
+	
+def starts_with(s, c):
+	return s.find(c) == 0;
+	
+def ends_with(s, c, last_char_only = True):
+	if last_char_only:
+		last_char = s[len(s) - 1:];
+		if c == last_char:
+			return True;
+		else:
+			return False;
+	else:
+		return s.rfind(c) > -1;
