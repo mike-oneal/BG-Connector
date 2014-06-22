@@ -160,13 +160,13 @@ Flow Charts
 General Thoughts and Concerns
 -----------------------------
 *System Design*
-The BG-BASE Connector is a fragile, loosely-coupled system. It relies on BG-BASE calling a Python module via a batch file in order to import the data from BG-BASE to the geodatabase. BG-BASE is responsible for deciding when to call the script, and must have read access to the script. The export process can be launched manually by a user or from a scheduled task.
+The BG-BASE Connector is a loosely-coupled system. It relies on BG-BASE calling a Python module via a batch file in order to import the data from BG-BASE to the geodatabase. BG-BASE is responsible for deciding when to call the script, and must have read access to the script. The export process can be launched manually by a user or from a scheduled task.
 
 *Data Integrity*
-Because the BG-BASE Connector is a loosely-coupled system, it is highly likely that the data between BG-BASE and the geodatabase will get out of sync. This can happen when CDC is not enabled in the Warehouse, when the XML change files of geodatabase changes are not processed correctly, or if there is a general network I/O error during the script's execution process.
+Because the BG-BASE Connector is a loosely-coupled system, it is possible that the data between BG-BASE and the geodatabase will get out of sync. This can happen when CDC is not enabled in the Warehouse, when the XML change files of geodatabase changes are not processed correctly, or if there is a general network I/O error during the script's execution process.  This then requires a re-synchronization between the two systems.
 
 *Performance*
-The desired synchronization between Warehouse and the geodatabase is as close to real time as possible. The BG-BASE Connector in its current form experiences a lot of overhead. It has been suggested that the connector is run on a scheduled interval rather than a transactional model to reduce the overhead.
+The desired synchronization between Warehouse and the geodatabase can be as close to real time as possible. The BG-BASE Connector in its current form experiences a lot of overhead. The current implementation is run on a scheduled interval rather than a transactional model to reduce the overhead.
 
 *BG-BASE Implementation*
 BG-BASE records observations using a concept of a line sequence, where a value of 1 is the most recent observation, the value of 2 is the second most recent observation, etc. When a new observation is recorded for a plant, there are X number of database transactions (and potentially X + 1, depending on how BG-BASE inserts the data).
@@ -182,6 +182,6 @@ Rather than using a line_seq to track the most recent observation, a FROM_DATE a
 *Insert into Plants_X(id, to_date) Values('fakeid', null)*
 
 *An alternate approach*
-BG-BASE can use ArcObjects to interact with the Geodatabase directly, therefore, the BG-BASE connector model can altogether be removed. BG-BASE could apply changes directly to Staging and call the synchronization process immediately. The export from the geodatabase to BG-BASE will still require a tool to generate the change file for BG-BASE to read.
+BG-BASE may be able to use ArcObjects to interact with the Geodatabase directly, therefore, the BG-BASE connector model can altogether be removed. BG-BASE could apply changes directly to Staging and call the synchronization process immediately. The export from the geodatabase to BG-BASE will still require a tool to generate the change file for BG-BASE to read.  To be further explored.
 
-An alternate approach to ArcOvhects is using an ArcGIS Server Feature Service, and BG-BASE calling the feature service's REST endpoint with HTTP requests. This eliminates the complexity of ArcObjects, but introduces the overhead of maintaining ArcGIS Server.
+An alternate approach to ArcOvhects is using an ArcGIS Server Feature Service, and BG-BASE calling the feature service's REST endpoint with HTTP requests. This eliminates the complexity of ArcObjects, but introduces the overhead of maintaining ArcGIS Server.  To be further explored.
